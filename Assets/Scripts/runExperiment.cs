@@ -1,0 +1,504 @@
+using UnityEngine;
+using System;
+using UnityEditor;
+using UnityEditorInternal;
+using UnityEngine.UIElements.Experimental;
+using UnityEngine.XR.Interaction.Toolkit.Utilities.Tweenables.Primitives;
+using Unity.VisualScripting;
+using TMPro;
+using JetBrains.Annotations;
+using System.Collections;
+
+public class runExperiment : MonoBehaviour
+{
+    // This is the launch script for the experiment, useful for toggling certain input states. 
+
+    //Navon v1  -UTS 
+
+
+    [Header("User Input")]
+    public bool playinVR;
+    public string participant;
+    public bool skipWalkCalibration;
+
+
+    [Header("Experiment State")]
+
+    public string responseMapping = "L:absent R:present"; // show for experimenter (default)
+    public int trialCount;
+    public float trialTime;
+    public float thisTrialDuration;
+    public bool trialinProgress;
+    [SerializeField] private int responseMap; // for assigning left/right to detect/reject [-1, 1];
+
+
+    [HideInInspector]
+    public int detectIndex, targState, blockType; // 
+
+    
+    [HideInInspector]
+    public bool isStationary, collectTrialSummary, collectEventSummary, hasResponded;
+
+    // Immutable snapshot of the current stimulus, created by targetAppearance
+    // at the moment the stimulus is shown. Because StimulusEvent is a readonly
+    // struct, it cannot be mutated after creation — so even if GenerateNavon()
+    // overwrites navonP for the next trial, this event remains intact for
+    // response scoring and data recording.
+    [HideInInspector]
+    public experimentParameters.StimulusEvent currentEvent;
+    private bool updateNextNavon;
+    
+
+    [HideInInspector]
+    public string[] responseforPresentAbsent; // grabbed by showText.
+    
+    bool SetUpSession;
+
+    //todo
+    //public bool forceheightCalibration;
+    //public bool forceEyecalibration;
+    //public bool recordEEG;
+    //public bool isEyetracked;
+
+
+    CollectPlayerInput playerInput;
+    experimentParameters expParams;
+    controlWalkingGuide controlWalkingGuide;
+    WalkSpeedCalibrator walkCalibrator;
+    ShowText ShowText;
+    FeedbackText FeedbackText;
+    targetAppearance targetAppearance;
+    RecordData RecordData;
+    // QuestStaircase QuestStaircase;
+    AdaptiveStaircase adaptiveStaircase;
+    
+    
+    makeNavonStimulus makeNavonStimulus;
+
+    //use  serialize field to require drag-drop in inspector. less expensive than GameObject.Find() .
+    [SerializeField] GameObject TextScreen;
+    [SerializeField] GameObject TextFeedback;
+    [SerializeField] GameObject StimulusScreen;
+
+    // Start is called once before the first execution of Update after the MonoBehaviour is created
+    void Start()
+    {
+
+
+        adaptiveStaircase = GetComponent<AdaptiveStaircase>();
+        
+        playerInput = GetComponent<CollectPlayerInput>();
+        expParams = GetComponent<experimentParameters>();
+        controlWalkingGuide = GetComponent<controlWalkingGuide>();
+        walkCalibrator = GetComponent<WalkSpeedCalibrator>();
+        RecordData = GetComponent<RecordData>();
+
+        ShowText = TextScreen.GetComponent<ShowText>();
+        FeedbackText = TextFeedback.GetComponent<FeedbackText>();
+
+        targetAppearance = StimulusScreen.GetComponent<targetAppearance>();
+        makeNavonStimulus = StimulusScreen.GetComponent<makeNavonStimulus>();
+        // hide player camera if not in VR (useful for debugging).
+        togglePlayers();
+
+        // flip coin for responsemapping:
+        assignResponses(); // assign Left/RIght clicks to above/below average(random)
+        
+        trialCount = 0;    
+        trialinProgress = false;
+
+        trialTime = 0f;
+        collectEventSummary = false; // send info after each target to csv file.
+        
+        hasResponded = false;
+        
+        updateNextNavon=false;
+        
+        SetUpSession = true;
+
+    }
+
+    // Update is called once per frame
+    void Update()
+    {
+        if (SetUpSession && ShowText.isInitialized)
+        {
+            if (skipWalkCalibration)
+            {
+                // show welcome 
+                ShowText.UpdateText(ShowText.TextType.CalibrationComplete);                
+            }
+            else
+            {
+                // show welcome 
+                ShowText.UpdateText(ShowText.TextType.Welcome);
+            }
+            SetUpSession = false;
+        }
+
+
+        //pseudo code: 
+        // listen for trial start (input)/
+        // if input. 1) start the walking guide movement
+        //           2) start the within trial co-routine
+        //           3) start the data recording.
+
+        if (!trialinProgress && playerInput.botharePressed)
+        {
+
+            // if we have not yet calibrated walk speed, simply move the wlaking guide to start loc:
+            if (playinVR)
+            {
+                if (walkCalibrator.isCalibrationComplete())
+                {
+                    //start trial sequence, including:
+                    // movement, co-routine, datarecording.
+
+                    Debug.Log("Starting Trial in VR mode");
+                    startTrial();
+                }
+                else
+                {
+                    Debug.Log("button pressed but walk calibration still in progress");
+                    // lets hide the walking guide temporarily. 
+                    controlWalkingGuide.setGuidetoHidden();
+                }
+            }
+            else // not in VR, skip calibration:
+            {
+                // Non-VR mode: skip calibration check and start trial directly
+                Debug.Log("Starting Trial (Non-VR mode)");
+                startTrial();
+            }
+
+        }
+
+        // increment trial time.
+        if (trialinProgress)
+        {
+            trialTime += Time.deltaTime; // increment timer.
+
+            if (trialTime > thisTrialDuration)
+            {
+                trialPackDown();
+                trialCount++;
+            }
+
+            if (trialTime < 0.5f || hasResponded)
+            {
+                return; // do nothing if early, or if already processed a reponse for current event
+            }
+
+            if (playerInput.anyarePressed)
+            {
+                processPlayerResponse(); // determines if a 'Detect' or 'Reject' based on controller mappings.
+            }
+
+
+
+        }
+
+
+        // // process no response (TO DO):
+        // if (targetAppearance.processNoResponse) // i.e. no reponse was recorded ,this value is set in the targetAppearance coroutine.
+        // {
+        //     Debug.Log("No Response, and No update to staircase, regenerating...");
+        //     //flip if present/absent on next trial:
+        //     makeGaborTexture.gaborP.signalPresent = UnityEngine.Random.Range(0f, 1f) < 0.5f ? true : false;   // Changed from 0.66 as we have changed lower asymptote to 0 (pThreshold now 0.5, not 0.75)            
+        //     makeGaborTexture.GenerateGabor(makeGaborTexture.gaborP.sAmp); // using the current intensity            
+        //     updateNextGabor = false; // perform once only   
+        //      targetAppearance.processNoResponse = false;
+        // }
+
+    } //end Update()
+
+    
+        
+        
+    
+
+    void togglePlayers()
+    {
+        if (playinVR)
+        {
+            GameObject.Find("VR_Player").SetActive(true);
+            GameObject.Find("Kb_Player").SetActive(false);
+        }
+        else
+        {
+            GameObject.Find("VR_Player").SetActive(false);
+            GameObject.Find("Kb_Player").SetActive(true);
+
+        }
+    }
+    void processPlayerResponse()
+    {
+
+        // first place the click into our array for subsequent recording
+        expParams.trialD.clickOnsetTime = trialTime;
+        
+
+        if (hasResponded || detectIndex <= 0) // if response already processed, eject
+        {
+            return;
+        }
+
+        // Read the immutable stimulus event — this was frozen at stimulus onset
+        // by targetAppearance, so it is safe to read even if GenerateNavon()
+        // has already prepared the next stimulus in the background.
+        var evt = currentEvent;
+
+        // Score the response against the stimulus that was actually shown.
+        // evt.targetPresent tells us whether the search target (E or T) was
+        // in the Navon figure; responseMap encodes the button mapping.
+        if (evt.targetPresent) // signal present cases
+        {
+            if ((responseMap == 1 && playerInput.rightisPressed) || (responseMap == -1 && playerInput.leftisPressed))
+            {
+                Debug.Log("Hit!");
+                expParams.trialD.targCorrect = 1;
+                expParams.trialD.targResponse = 1;
+            }
+            else if ((responseMap == 1 && playerInput.leftisPressed) || (responseMap == -1 && playerInput.rightisPressed))
+            {
+                Debug.Log("Miss!");
+                expParams.trialD.targCorrect = 0;
+                expParams.trialD.targResponse = 0;
+            }
+        }
+        else // signal absent
+        {
+            if ((responseMap == 1 && playerInput.rightisPressed) || (responseMap == -1 && playerInput.leftisPressed))
+            {
+                Debug.Log("False Alarm!");
+                expParams.trialD.targCorrect = 0;
+                expParams.trialD.targResponse = 1;
+            }
+            else if ((responseMap == 1 && playerInput.leftisPressed) || (responseMap == -1 && playerInput.rightisPressed))
+            {
+                Debug.Log("Correct Rejection!");
+                expParams.trialD.targCorrect = 1;
+                expParams.trialD.targResponse = 0;
+            }
+        }
+
+        // Pass the immutable event to the data recorder. RecordData reads
+        // trial context (blockID, trialID, etc.) from trialD, and stimulus
+        // data (letters, targetPresent, etc.) from the event — no write-back needed.
+        RecordData.extractEventSummary(currentEvent);
+
+        hasResponded = true; // passed to coroutine, avoids processing omitted responses.
+
+        // Now update stimulus after each response
+        // send the information to AdaptiveStaircase and prepare next comparison.
+
+
+        if (trialCount >= expParams.nstandingStilltrials)
+        {
+            float nextDuration = makeNavonStimulus.navonP.targDuration; //default
+
+            bool wasCorrect = expParams.trialD.targCorrect == 1 ? true : false;
+
+            string condition = GetConditionLabel(expParams.trialD.blockType);
+            if (condition != null)
+                nextDuration = adaptiveStaircase.ProcessResponse(condition, wasCorrect);
+
+            // Apply new duration; GenerateNavon() is deferred to the coroutine
+            // (runs after the response window, off the click path).
+            makeNavonStimulus.navonP.targDuration = nextDuration;
+        } else
+        {
+            // just regenerate without updating contrast, provide feedback also.
+            Debug.Log("Still in practice trials, regenerating... ");
+             makeNavonStimulus.GenerateNavon(); // using the current intensity, but new randomisation of target present/absent and letter identity.
+            
+        }
+        
+
+        if (trialCount<= expParams.nFeedbackTrials)
+        {
+            showFeedback();
+        };
+        
+                
+    }
+    private void HideFeedbackText()
+    {
+        FeedbackText.UpdateText(FeedbackText.TextType.Hide);
+    }
+
+    void startTrial()
+    {
+        // This method handles the trial sequence.
+        //// First ensure some parameters are set, then launch the coroutine and
+
+        //recalibrate screen height to participants HMD
+        controlWalkingGuide.updateScreenHeight();
+        //remove text
+        ShowText.UpdateText(ShowText.TextType.Hide);
+        FeedbackText.UpdateText(FeedbackText.TextType.Hide);
+
+        //establish trial parameters:
+        // Calculate max targets if not already done (should happen after calibration)
+        if (expParams.maxTargsbySpeed == null)
+        {
+            // expParams.CalculateMaxTargetsBySpeed();
+        }
+
+        trialinProgress = true; // for coroutine (handled in targetAppearance.cs).        
+        ShowText.UpdateText(ShowText.TextType.Hide);
+        trialTime = 0;
+        targState = 0; //target is hidden. 
+
+        //Establish (this trial) specific parameters:
+        blockType = expParams.blockTypeArray[trialCount, 2]; //third column [0,1,2].
+
+        // thisTrialDuration = expParams.GetTrialDuration(); //thisTrialDuration passed to targetAppearance.cs
+        thisTrialDuration = expParams.walkDuration; // all trials the same duration now, distance varies instead.
+
+        //query if stationary (restricts movement guide)
+        isStationary = blockType == 0 ? true : false;
+
+        //populate public trialD structure for extraction in recordData.cs
+
+        // add to public struct trialD for recordData.cs and other scripts
+        expParams.trialD.trialNumber = trialCount;
+        expParams.trialD.blockID = expParams.blockTypeArray[trialCount, 0];
+        expParams.trialD.trialID = expParams.blockTypeArray[trialCount, 1]; // count within block
+        expParams.trialD.isStationary = isStationary;
+        expParams.trialD.blockType = blockType; // 0,1,2
+
+        makeNavonStimulus.forceTargetPresent = trialCount < expParams.nstandingStilltrials;
+
+        // Set detection task from sub-block assignment.
+        // Each block is split into two equal halves; the task is looked up by
+        // which half the current trial falls in (sub-block 0 or 1).
+        int currentBlockID  = expParams.blockTypeArray[trialCount, 0];
+        int trialInBlock    = expParams.blockTypeArray[trialCount, 1];
+        int subBlock        = trialInBlock < expParams.nTrialsperBlock / 2 ? 0 : 1;
+        var newTask = expParams.blockDetectionTask[currentBlockID, subBlock];
+
+        // Force DetectE for the standing-still practice trials.
+        if (trialCount < expParams.nstandingStilltrials)
+        {
+            newTask = experimentParameters.DetectionTask.DetectE;
+        }
+
+        // Regenerate stimulus if the task changed (new block with different target letter)
+        if (makeNavonStimulus.navonP.currentTask != newTask)
+        {
+            makeNavonStimulus.navonP.currentTask = newTask;
+            makeNavonStimulus.GenerateNavon();
+        }
+        else
+        {
+            makeNavonStimulus.navonP.currentTask = newTask;
+        }
+
+        //updated phases for flow managers:
+        RecordData.recordPhase = RecordData.phase.collectResponse;
+
+        // if not a stationary trial, start movement guide.
+        if (!isStationary)
+        {
+            controlWalkingGuide.moveGuideatWalkSpeed();
+        }
+
+        //start coroutine to control target onset and target behaviour:
+        print("Starting Trial " + (trialCount + 1) + " of " + expParams.nTrialsperBlock);
+        targetAppearance.startSequence(); // co routine in another script.
+
+    }
+
+    void trialPackDown()
+    {
+        // This method handles the end of a trial, including data recording and cleanup.
+        Debug.Log("End of Trial " + (trialCount + 1));
+
+        RecordData.recordPhase = RecordData.phase.stop;
+
+        // Stop the stimulus coroutine immediately. This must happen before resetting
+        // trialTime, otherwise the zombie coroutine's trailing while-loop
+        // (while trialTime < thisTrialDuration) would re-enter true when trialTime
+        // is reset to 0, keeping the coroutine alive through the entire next trial
+        // and causing a second coroutine instance to overlap with it.
+        targetAppearance.stopSequence();
+
+        // Reset trial state
+        trialinProgress = false;
+        trialTime = 0f;
+
+        //determine next start position for walking guide.
+        controlWalkingGuide.SetGuideForNextTrial(); //uses current trialcount +1 to determine next position.
+
+
+        // Update text screen to show next steps or end of experiment
+        ShowText.UpdateText(ShowText.TextType.TrialStart); //using the previous trial count to show next trial info.
+
+
+    }
+
+     /// <summary>
+    /// Maps a blockType integer to a condition label for the adaptive staircase.
+    /// Returns null for stationary trials (blockType 0) which don't use the staircase.
+    /// Add new entries here if new walking conditions are added.
+    /// </summary>
+    string GetConditionLabel(int blockType)
+    {
+        switch (blockType)
+        {
+            case 1: return "slow";
+            case 2: return "natural";
+            default: return null; // stationary — no staircase
+        }
+    }
+    void assignResponses()
+    {
+        bool switchmapping = UnityEngine.Random.Range(0f, 1f) < 0.5f ? true : false;
+
+        ////Hack
+        //// To force L:Present R:absent
+        //bool switchmapping = true;
+        //// To force L:absent R:Present
+        //bool switchmapping = false;
+
+
+        responseforPresentAbsent = new string[2];
+
+        if (switchmapping)
+        {
+            responseMap = -1;
+            responseMapping = "L:Present R:absent";
+            responseforPresentAbsent[0] = "Left click"; //present
+            responseforPresentAbsent[1] = "Right click"; //absent
+        }
+        else
+        {
+            responseMap = 1;
+            responseforPresentAbsent[0] = "Right click"; //present
+            responseforPresentAbsent[1] = "Left click"; //absent
+            responseMapping = "L:Absent R:Present";
+
+        }
+    }
+
+void showFeedback()
+    {
+        // Practice trial: provide feedback.
+        // GenerateNavon() is deferred to the coroutine.
+        if (expParams.trialD.targCorrect == 1)
+        {
+            FeedbackText.UpdateText(FeedbackText.TextType.Correct);
+            //using Unity's Invoke, hide after small duration.
+            Invoke(nameof(HideFeedbackText), 0.2f); // inovke requires name of method as a string.
+
+        }
+        else
+        {
+            FeedbackText.UpdateText(FeedbackText.TextType.Incorrect);
+            Invoke(nameof(HideFeedbackText), 0.2f); // inovke requires name of method as a string.
+        }
+    }
+
+
+}

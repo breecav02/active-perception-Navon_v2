@@ -1,0 +1,208 @@
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+using UnityEngine.InputSystem.Composites;
+
+public class targetAppearance : MonoBehaviour
+{
+    /// <summary>
+    /// Handles the co-routine to precisely time changes to target appearance during walk trajectory.
+    /// 
+    /// Main method called from runExperiment.
+
+
+    public bool processNoResponse;
+    private float waitTime;
+    private float trialDuration;
+    private float[]  trialOnsets;
+    
+    runExperiment runExperiment;
+    Renderer rend;
+    
+    makeNavonStimulus makeNavonStimulus;
+    experimentParameters expParams;
+    CalculateStimTimes calcStimTimes;
+    //Staircase ppantStaircase;
+
+    [SerializeField]
+    GameObject scriptHolder;
+
+
+    private Color targColor;
+
+    bool includeBackwardMask = true;
+
+    private void Start()
+    {
+        runExperiment = scriptHolder.GetComponent<runExperiment>();
+        expParams = scriptHolder.GetComponent<experimentParameters>();
+        calcStimTimes = scriptHolder.GetComponent<CalculateStimTimes>();
+
+        // methods:
+        makeNavonStimulus = GetComponent<makeNavonStimulus>();
+        processNoResponse = false;
+        targColor = new Color(1f, 1f, 1f); // rend.material.color; // start target a
+
+        // includeBackwardMask = true;
+
+
+
+    }
+
+    public void startSequence()
+    {
+        // Stop any coroutine still running from the previous trial before starting a new one.
+        // This is a safety net — trialPackDown() should already have called stopSequence(),
+        // but guarding here ensures no zombie can survive into the new trial.
+        StopCoroutine("trialProgress");
+
+        trialDuration = runExperiment.thisTrialDuration;
+        makeNavonStimulus.hideNavon();
+
+        // note that onsets are now pre-calculated:
+        trialOnsets = calcStimTimes.allOnsets[runExperiment.trialCount];
+
+        StartCoroutine("trialProgress");
+    }
+
+    /// <summary>
+    /// Immediately halts the stimulus coroutine and hides the Navon display.
+    /// Must be called from trialPackDown() so the coroutine does not outlive the trial.
+    /// StopCoroutine must be called on the same MonoBehaviour that owns the coroutine.
+    /// </summary>
+    public void stopSequence()
+    {
+        StopCoroutine("trialProgress");
+        makeNavonStimulus.hideNavon();
+    }
+
+    /// <summary>
+    /// Coroutine controlling target appearance with precise timing.
+    /// </summary>
+    /// 
+
+    IEnumerator trialProgress()
+    {
+        while (runExperiment.trialinProgress) // this creates a never-ending loop for the co-routine.
+        {
+            // trial progress:
+            // / The timing of trial elements is determined on the fly.
+            // / Boundaries set in trialParameters.
+            // begin target presentation:
+            runExperiment.detectIndex = 0; // listener, to assign correct responses per target [0 = FA, 1 = targ1, 2 = targ 2]
+
+            yield return new WaitForSecondsRealtime(expParams.preTrialsec);
+
+
+            // show target [use duration or colour based on staircase method].
+            //// however many targets we have to present this trial, cycle through and present
+
+            for (int itargindx = 0; itargindx < trialOnsets.Length; itargindx++)
+            { 
+                bool isLastTarget = itargindx == trialOnsets.Length - 1; // is this the final stimulus?
+
+                // First stimulus: wait from trial start. Subsequent stimuli: wait for the
+                // remaining gap between now and the pre-calculated onset time.
+                if (itargindx == 0)
+                {
+                    waitTime = trialOnsets[0];
+                }
+                else
+                {
+                    waitTime = trialOnsets[itargindx] - runExperiment.trialTime;
+                }
+
+                // wait before presenting target:
+                yield return new WaitForSecondsRealtime(waitTime);
+
+
+
+                // to increase difficulty, and remove expectancy, only show on the % of trials.
+                if (Random.value <= .95f) // proportion to show targets (now have jitter also).
+                {
+
+
+                    //setColour(trialParams.targetColor);
+                    makeNavonStimulus.showNavon();
+                    runExperiment.targState = 1; // target is shown
+                    runExperiment.detectIndex = itargindx + 1; //  click responses collected in this response window will be 'correct'
+                    runExperiment.hasResponded = false;  //switched if targ detected.
+                    
+                    // Use adaptive stimulus duration
+                    float currentStimulusDuration =  makeNavonStimulus.navonP.targDuration; // function call?
+                    
+                    // Freeze all stimulus properties into an immutable event at this
+                    // exact moment. Once created, this snapshot cannot be changed —
+                    // so even when GenerateNavon() later overwrites navonP for the
+                    // next stimulus, the response handler and data recorder will still
+                    // see the correct values for *this* presentation.
+                    runExperiment.currentEvent = new experimentParameters.StimulusEvent(
+                        detectionTask: makeNavonStimulus.navonP.currentTask,
+                        stimulusType:  makeNavonStimulus.navonP.stimulusType,
+                        globalLetter:  makeNavonStimulus.navonP.globalLetter,
+                        localLetter:   makeNavonStimulus.navonP.localLetter,
+                        targetPresent: makeNavonStimulus.navonP.targetPresent,
+                        isCongruent:   makeNavonStimulus.navonP.isCongruent,
+                        trialCategory: makeNavonStimulus.navonP.trialCategory,
+                        onsetTime:     runExperiment.trialTime,
+                        stimulusDuration: currentStimulusDuration
+                    );
+
+                
+                    yield return new WaitForSecondsRealtime(currentStimulusDuration);
+                    // BACKWARD MASK: Show mask AFTER stimulus for 30ms
+                    
+                    if (includeBackwardMask)
+                    {
+                        makeNavonStimulus.backwardMask();  // Shows the hash grid
+                        yield return new WaitForSecondsRealtime(0.03f);  // 30ms mask
+                        makeNavonStimulus.hideNavon();
+                        runExperiment.targState = 0; // target has been removed
+                        //adjust resposne window
+                        yield return new WaitForSecondsRealtime(expParams.responseWindow - .03f);
+                    } else
+                    {
+                       makeNavonStimulus.hideNavon();
+                       runExperiment.targState = 0; // target has been removed
+                        yield return new WaitForSecondsRealtime(expParams.responseWindow);
+                    }
+
+                    // Generate the next texture now, after the response window.
+                    // processPlayerResponse() has already updated navonP.targDuration via
+                    // the staircase — so this texture reflects the new difficulty.
+                    // Running here keeps GenerateNavon() off the button-click path.
+                    makeNavonStimulus.GenerateNavon();
+
+                    // if no click in time, count as a miss.
+                    if (!runExperiment.hasResponded) // no response
+                    {
+                        processNoResponse = true; // handled in runExperiment.
+                    }
+                    runExperiment.detectIndex = 0; //clicks from now could be counted as incorrect (too slow).  //runExperiment.targCount++;
+                }
+                else // hide target
+                {
+                    Debug.Log("Hiding target");
+                    // no colour change, no change to targ state, detectindex=0,
+                    //how long to show target for?
+                    yield return new WaitForSecondsRealtime(expParams.targDurationsec);
+                    yield return new WaitForSecondsRealtime(expParams.responseWindow);
+                    //trialParams.trialD.targOnsetTime = 0;
+                    processNoResponse = false; // don't count as a miss (since no targets).
+                }
+            }// for each target
+
+            // after for loop, wait for trial end:
+            while (runExperiment.trialTime < runExperiment.thisTrialDuration)
+            {
+                yield return null;  // wait until next frame. 
+            }
+
+            break; //Trial Complete, exit the while loop.
+
+        } // while trial in progress
+
+    } // IEnumerator
+
+
+}
