@@ -998,7 +998,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c042fe66fa79f7a46a6a934d4362acd7, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  playinVR: 1
+  playinVR: 0
   participant: test
   skipWalkCalibration: 1
   responseMapping: L:absent R:present
@@ -3056,8 +3056,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c5f377c4af8b74898bfb3ae138d06a04, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  offsetX: 0
-  offsetY: 0
   forceTargetPresent: 0
   scriptHolder: {fileID: 731557924}
 --- !u!1 &1948162547
