@@ -38,7 +38,7 @@ public class experimentParameters : MonoBehaviour
     private int[] blockTypelist;
     [HideInInspector]
     public int[,] blockTypeArray; //nTrials x 3 (block, trialID, type)
-    private float propSlowSpeed, propNaturalSpeed;
+    private float propStationary, propNaturalSpeed;
     [HideInInspector]
     public DetectionTask[,] blockDetectionTask; // [blockID, subBlock] → DetectE or DetectT
                                                 // subBlock 0 = trials 0..(nTrialsperBlock/2 - 1)
@@ -191,15 +191,15 @@ public class experimentParameters : MonoBehaviour
         // targetColor = new Color(.55f, .55f, .55f, targetAlpha); // light grey (start easy, become difficult).
 
 
-        nWalkSpeeds = 2; // [0,1,2]; 1 and 2 are slow and natural pace
+        nWalkSpeeds = 2; // [0,1,2]; main blocks now randomise between 0 (stationary) and 2 (natural pace). 1 (slow) is still used during practice calibration.
         
         //
         nTrialsperBlock = 20; // 
         nBlocks = 11; //total. 
         nPracticeBlocks = 1; // overrides the first block with some additional stationary trials/feedback etc.
                              //
-        propSlowSpeed = 0.5f; // proption slow speed. (blocks) (reduced to account for more targs in slow blocks)
-        propNaturalSpeed = 1 - propSlowSpeed; // proportion natural speed for the remainder (after practice block)
+        propStationary = 0.5f; // proportion stationary (blocks)
+        propNaturalSpeed = 1 - propStationary; // proportion natural speed for the remainder (after practice block)
 
         createTrialTypes();
 
@@ -220,22 +220,22 @@ public class experimentParameters : MonoBehaviour
 
         // Block 0 is practice and handles its own trial-type mix in the practice loop below.
         // Experimental blocks (iblock 1..nBlocks-1): block 1 is always natural pace;
-        // blocks 2..nBlocks-1 are pseudorandomly shuffled. block type: 1 = slow walk, 2 = normal walk
+        // blocks 2..nBlocks-1 are pseudorandomly shuffled. block type: 0 = stationary, 2 = normal walk
         int nExpBlocks      = nBlocks - nPracticeBlocks;                           // 10
-        const int nForcedFastBlocks = 1;                                           // block 1 always a mix of natural and slow pace
+        const int nForcedFastBlocks = 1;                                           // block 1 always a mix of natural and stationary
         int nShuffledBlocks = nExpBlocks ;                                         // 10
-        int nSlowBlocks     = Mathf.RoundToInt(nExpBlocks * propSlowSpeed);        // 5 (target total)
-        int nFastBlocks     = nExpBlocks - nSlowBlocks;                            // 5 
+        int nStationaryBlocks = Mathf.RoundToInt(nExpBlocks * propStationary);     // 5 (target total)
+        int nFastBlocks     = nExpBlocks - nStationaryBlocks;                      // 5 
 
-        blockTypelist = new int[nShuffledBlocks]; // nBlocks - practice =10 (5 slow, 5 fast)
+        blockTypelist = new int[nShuffledBlocks]; // nBlocks - practice =10 (5 stationary, 5 fast)
 
         int icount = 0;
-        for (int i = 0; i < nSlowBlocks;  i++) { blockTypelist[icount++] = 1; }
+        for (int i = 0; i < nStationaryBlocks;  i++) { blockTypelist[icount++] = 0; }
         for (int i = 0; i < nFastBlocks;  i++) { blockTypelist[icount++] = 2; }
 
         shuffleArray(blockTypelist);
         // Prepend 1 forced natural-pace block → nBlocks entries total, all accessed by the loop below.
-        // Total balance: 5 slow + 5 fast (+ 1 forced practice).
+        // Total balance: 5 stationary + 5 fast (+ 1 forced practice).
 
         blockTypelist = new[] { 2 }.Concat(blockTypelist).ToArray();
 
@@ -258,9 +258,9 @@ public class experimentParameters : MonoBehaviour
                 {
                     blockTypeArray[icounter, 2] = 0; // stationary for first nstandingStilltrials.
                 }
-                else if (icounter >= nstandingStilltrials && icounter <= (nstandingStilltrials + 10)) // then  10x practice going slow
+                else if (icounter >= nstandingStilltrials && icounter <= (nstandingStilltrials + 10)) // then 10x more practice standing still
                 {
-                    blockTypeArray[icounter, 2] = 1; // slow walk.
+                    blockTypeArray[icounter, 2] = 0; // stationary practice.
                 }
 
                 icounter++;
