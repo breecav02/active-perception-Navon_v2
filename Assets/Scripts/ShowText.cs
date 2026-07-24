@@ -145,6 +145,9 @@ public class ShowText : MonoBehaviour
                 "You are searching for \"" + GetColoredTargetLetter() + "\"\n\n" +
                 "Remember: \n\n " + runExperiment.responseMapping;
                 TextBG.SetActive(true); //show background to enhance text.
+
+                // Show a demo Navon: big I made of little E's
+                makeNavonStimulus.showSpecificNavon('I', 'E');
             }
             else if (textType == TextType.PhotoTrialInstructions)
             {
