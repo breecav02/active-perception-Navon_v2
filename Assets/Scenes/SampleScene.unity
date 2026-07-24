@@ -2914,7 +2914,6 @@ GameObject:
   - component: {fileID: 1783951023}
   - component: {fileID: 1783951022}
   - component: {fileID: 1783951021}
-  - component: {fileID: 1783951024}
   - component: {fileID: 1783951025}
   - component: {fileID: 1783951026}
   m_Layer: 0
@@ -3018,18 +3017,6 @@ MeshFilter:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1783951019}
   m_Mesh: {fileID: 10210, guid: 0000000000000000e000000000000000, type: 0}
---- !u!114 &1783951024
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1783951019}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: c00338d74520d7241b9a8f8736da4ba1, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
 --- !u!114 &1783951025
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -3056,6 +3043,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c5f377c4af8b74898bfb3ae138d06a04, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  offsetX: 0
+  offsetY: 0
+  photoTrialsComplete: 0
   forceTargetPresent: 0
   scriptHolder: {fileID: 731557924}
 --- !u!1 &1948162547

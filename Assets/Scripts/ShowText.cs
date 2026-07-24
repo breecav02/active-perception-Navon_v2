@@ -17,7 +17,8 @@ public class ShowText : MonoBehaviour
         TrialStart = 3,
         ExperimentComplete = 4,
         StandingInstructions = 5,
-        WalkingInstructions = 6
+        WalkingInstructions = 6,
+        PhotoTrialInstructions = 7
     }
 
     private TextMeshProUGUI textMesh;
@@ -53,8 +54,8 @@ public class ShowText : MonoBehaviour
             [TextType.CalibrationComplete] = "", //dynamically updated below
 
             [TextType.TrialStart] = "", //dynamically updated with trial/block index below
-            // ... add other strings
 
+            [TextType.PhotoTrialInstructions] = "", //dynamically updated below
 
         };
         isInitialized = true; // mark as ready
@@ -134,6 +135,9 @@ public class ShowText : MonoBehaviour
                 "You are searching for \"" + GetColoredTargetLetter() + "\"\n\n" +
                 "Remember: \n\n " + runExperiment.responseMapping;
                 TextBG.SetActive(true);
+
+                // Show a demo Navon: big I made of little E's
+                makeNavonStimulus.showSpecificNavon('I', 'E');
             }
             else if (textType == TextType.Welcome) // update dynamically with response mapping
             {
@@ -141,6 +145,14 @@ public class ShowText : MonoBehaviour
                 "You are searching for \"" + GetColoredTargetLetter() + "\"\n\n" +
                 "Remember: \n\n " + runExperiment.responseMapping;
                 TextBG.SetActive(true); //show background to enhance text.
+            }
+            else if (textType == TextType.PhotoTrialInstructions)
+            {
+                textMesh.text = "Which of the two presented choices is most similar to the target stimulus above the line?" +
+                "\n\n" +
+                "L: Option 1 \n" +
+                "R: Option 2";
+                TextBG.SetActive(true);
             }
             else
             {

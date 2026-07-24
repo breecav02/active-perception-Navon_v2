@@ -18,6 +18,27 @@ public class makeNavonStimulus : MonoBehaviour
     private Color[] pixelBuffer;
     private Texture2D[] preGenTextures;
 
+    // ── Photo response trials (runs BEFORE everything else) ─────────
+    // Fixed order, never shuffled. Images in Assets/Resources/PhotoTrials/.
+    // NO inspector changes needed — everything is found at runtime.
+    private static readonly string[] photoResourceNames =
+    {
+        "PhotoTrials/trial1",
+        "PhotoTrials/trial2",
+        "PhotoTrials/trial3",
+        "PhotoTrials/trial4",
+    };
+    private Texture2D[] photoTrialTextures;
+    private int photoTrialIndex = 0;
+    private bool prevAnyPressed = false;
+    private float photoTrialOnsetTime;
+    private string photoTrialOutputFile;
+    private CollectPlayerInput playerInput;
+    private ShowText showText; // found at runtime, no inspector change
+    private bool photoTrialTextShown = false;
+    public bool photoTrialsComplete = false; // runExperiment checks this
+    // ─────────────────────────────────────────────────────────────────
+
     // (globalLetter, localLetter) for each StimulusType enum value (indices 0-11)
     private static readonly (char, char)[] typeLetters =
     {
@@ -111,6 +132,7 @@ public class makeNavonStimulus : MonoBehaviour
     {
         rend = GetComponent<Renderer>();
         experimentParameters = scriptHolder.GetComponent<experimentParameters>();
+        playerInput = scriptHolder.GetComponent<CollectPlayerInput>();
         offsetX = Random.Range(100f, 200f);
         offsetY = Random.Range(100f, 200f);
 
@@ -136,15 +158,159 @@ public class makeNavonStimulus : MonoBehaviour
         fixationTexture = GenerateFixationCross();
         PreGenerateAllTextures();
         nextTexture = GenerateNavon(); // fast lookup after pre-generation
-        showNavon();
         maskTexture = GenerateMask();
-        
+
+        // ── Load and start photo trials ──
+        showText = FindObjectOfType<ShowText>();
+        LoadPhotoTrialTextures();
+        if (photoTrialTextures != null && photoTrialTextures.Length > 0)
+        {
+            photoTrialIndex = 0;
+            ShowCurrentPhotoTrial();
+            Debug.Log("Photo trials: loaded " + photoTrialTextures.Length + " images. Waiting for responses.");
+        }
+        else
+        {
+            Debug.LogWarning("Photo trials: no images found in Resources/PhotoTrials/. Skipping.");
+            photoTrialsComplete = true;
+            showNavon();
+        }
+
         Debug.Log("makeNavonStimulus initialized - DUAL DETECTION (E and T) with 12 stimulus types");
+    }
+
+    void Update()
+    {
+        // Only runs during the photo trial phase. Once complete, does nothing.
+        if (photoTrialsComplete) return;
+        if (playerInput == null) return;
+
+        // ShowText may not be initialized yet on the first few frames.
+        // Keep trying until it works.
+        if (!photoTrialTextShown)
+        {
+            if (showText == null) showText = FindObjectOfType<ShowText>();
+            if (showText != null && showText.isInitialized)
+            {
+                showText.UpdateText(ShowText.TextType.PhotoTrialInstructions);
+                photoTrialTextShown = true;
+            }
+        }
+
+        bool anyPressed = playerInput.leftisPressed || playerInput.rightisPressed;
+
+        // Edge-detect: respond only on the frame a trigger is first pressed.
+        if (anyPressed && !prevAnyPressed)
+        {
+            string side = playerInput.leftisPressed ? "Left" : "Right";
+            float rt = Time.time - photoTrialOnsetTime;
+            LogPhotoTrialResponse(photoTrialIndex, side, rt);
+            Debug.Log("Photo trial " + photoTrialIndex + ": responded " + side + " (RT=" + rt.ToString("F2") + "s)");
+
+            photoTrialIndex++;
+            if (photoTrialIndex >= photoTrialTextures.Length)
+            {
+                // All 4 done. Hand off to the normal experiment.
+                photoTrialsComplete = true;
+                if (showText != null) showText.UpdateText(ShowText.TextType.Hide);
+                hideNavon(); // show fixation cross as a clean transition.
+                Debug.Log("Photo trials complete.");
+            }
+            else
+            {
+                ShowCurrentPhotoTrial();
+            }
+        }
+        prevAnyPressed = anyPressed;
+    }
+
+    void LoadPhotoTrialTextures()
+    {
+        List<Texture2D> loaded = new List<Texture2D>();
+        foreach (string name in photoResourceNames)
+        {
+            Texture2D src = Resources.Load<Texture2D>(name);
+            if (src == null)
+            {
+                Debug.LogWarning("makeNavonStimulus: could not load Resources/" + name);
+                continue;
+            }
+            // Resize to 1024x1024 to match the quad's existing UV mapping.
+            loaded.Add(ResizeTo1024(src));
+        }
+        photoTrialTextures = loaded.ToArray();
+    }
+
+    Texture2D ResizeTo1024(Texture2D source)
+    {
+        RenderTexture rt = RenderTexture.GetTemporary(width, height);
+        Graphics.Blit(source, rt);
+        RenderTexture prev = RenderTexture.active;
+        RenderTexture.active = rt;
+        Texture2D resized = new Texture2D(width, height);
+        resized.ReadPixels(new Rect(0, 0, width, height), 0, 0);
+        resized.Apply();
+        RenderTexture.active = prev;
+        RenderTexture.ReleaseTemporary(rt);
+        return resized;
+    }
+
+    void ShowCurrentPhotoTrial()
+    {
+        rend.material.mainTexture = photoTrialTextures[photoTrialIndex];
+        photoTrialOnsetTime = Time.time;
+    }
+
+    // Trials 1 & 4: Left = Global, Right = Local
+    // Trials 2 & 3: Left = Local,  Right = Global
+    private string GetPreference(int trialIndex, string side)
+    {
+        bool leftIsGlobal = (trialIndex == 0 || trialIndex == 3); // trials 1 & 4 (0-indexed)
+        if (side == "Left")
+            return leftIsGlobal ? "Global" : "Local";
+        else
+            return leftIsGlobal ? "Local" : "Global";
+    }
+
+    void LogPhotoTrialResponse(int trialIndex, string side, float responseTime)
+    {
+        try
+        {
+            if (photoTrialOutputFile == null)
+            {
+                RecordData recordData = scriptHolder.GetComponent<RecordData>();
+                runExperiment runExp = scriptHolder.GetComponent<runExperiment>();
+                string participant = runExp != null ? runExp.participant : "unknown";
+                string folder = recordData != null ? recordData.outputFolder : Application.persistentDataPath + "/";
+                string startTime = recordData != null ? recordData.startTime : System.DateTime.Now.ToString("yyyy-MM-dd-hh-mm");
+                System.IO.Directory.CreateDirectory(folder);
+                photoTrialOutputFile = folder + participant + "_" + startTime + "_GlobalLocalPreference.csv";
+                System.IO.File.WriteAllText(photoTrialOutputFile, "participant,trialIndex,imageName,response,preference,responseTime_sec\r\n");
+            }
+            string participant2 = scriptHolder.GetComponent<runExperiment>()?.participant ?? "unknown";
+            string preference = GetPreference(trialIndex, side);
+            string line = participant2 + "," + trialIndex + "," + photoResourceNames[trialIndex] + "," + side + "," + preference + "," + responseTime.ToString("F3") + "\r\n";
+            System.IO.File.AppendAllText(photoTrialOutputFile, line);
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogWarning("Photo trial log error: " + e.Message);
+        }
     }
 
     public void showNavon()
     {
         rend.material.mainTexture = nextTexture;
+    }
+
+    /// <summary>
+    /// Show a specific Navon stimulus (e.g. big 'I' made of little 'E's for demo purposes).
+    /// Creates the texture on the fly since it may not be one of the 12 pre-generated types.
+    /// </summary>
+    public void showSpecificNavon(char globalLetter, char localLetter)
+    {
+        Texture2D demo = CreateNavonTexture(globalLetter, localLetter);
+        rend.material.mainTexture = demo;
     }
 
     public void hideNavon()

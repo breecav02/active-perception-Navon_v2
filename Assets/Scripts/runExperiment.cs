@@ -121,6 +121,9 @@ public class runExperiment : MonoBehaviour
     // Update is called once per frame
     void Update()
     {
+        // Photo trials run first (inside makeNavonStimulus). Block everything until done.
+        if (!makeNavonStimulus.photoTrialsComplete) return;
+
         if (SetUpSession && ShowText.isInitialized)
         {
             if (skipWalkCalibration)
